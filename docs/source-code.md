@@ -1,15 +1,20 @@
-![v2-b839e330a1c788f25c8cbbb4126cb919_r](https://raw.githubusercontent.com/aaaaaAndy/picture/main/images/20210510132942.jpg)
+
+
+![1571560979-52c8a3ffc688947a](https://raw.githubusercontent.com/aaaaaAndy/picture/main/images/20210510153930.png)
 
 `Webpack`执行主要有一下几个过程：
 
 1.  初始化参数：从配置文件和`shell`命令中读取参数并与默认参数合并，得出最终的参数；
 2.  开始编译：用上一步获取的参数初始化`Compiler`对象，加载所有配置的插件，并执行`Compiler`对象实例的`run`方法开始编译；
-3.  `Compilation`实例化：生成`Compilation`实例，开始一轮新的编译；
 4.  确定入口：根据配置中的`entry`找出所有的入口文件；
 5.  编译模块：从入口文件开始，调用所有配置的`Loader`对模块进行翻译 ，递归找到所有依赖的模块并进行处理；
 6.  完成编译：在经过第5步使用`Loader`翻译完所有模块后，得到了每个模块被翻译后的最终内容以及他们之间的依赖关系；
 7.  输出资源：根据入口和模块之间的依赖关系，组装成一个个包含多个模块的`Chunk`，再把每隔`Chunk`转换成一个单独的文件加入到输出列表，这一步是可以修改内容的最后机会；
 8.  输出完成：在确定好输出内容后，根据配置确定输出的路径和文件名，把文件内容写入到文件系统。
+
+
+
+`Webpack`是基于`Tapable`实现的插件化，所以在阅读`Webpack`源码之前应该先了解`Tapable`的工作原理：[《Tapable源码》](https://aaaaaandy.github.io/tapable/#/source)
 
 ## 1. 初始化参数
 
@@ -74,43 +79,43 @@ runCommand(packageManager, installOptions.concat(packageName))
 
 ```javascript
 class WebpackCLI {
-  constructor() {
-    this.webpack = require('webpack');
-    // other code ...
-  }
-  
-  async createCompiler(options, callback) {
-    let compiler;
-    
-    this.applyNodeEnv(options);
+	constructor() {
+		this.webpack = require('webpack');
+		// other code ...
+	}
 
-    let config = await this.resolveConfig(options);
-    
-    config = await this.applyOptions(config, options);
-    
-    // 添加CLIPlugin，这是一个默认plugin
-    config = await this.applyCLIPlugin(config, options);
-    
- 		try {
-      // 调用webpack方法
-    	compiler = new this.webpack(
-      	config.options,
-        callback
-        	? (error, stats) => {
-            	if (error && this.isValidationError(error)) {
-             		this.logger.error(error.message)
-              	process.exit(2);
-            	}
-            	callback(error, stats);
-          	}
-           : callback,
-      )  
-    } catch() {
-      // other code ...
-    }
-  }
- 
-  // other code...
+	async createCompiler(options, callback) {
+		let compiler;
+
+		this.applyNodeEnv(options);
+
+		let config = await this.resolveConfig(options);
+
+		config = await this.applyOptions(config, options);
+
+		// 添加CLIPlugin，这是一个默认plugin
+		config = await this.applyCLIPlugin(config, options);
+
+		try {
+			// 调用webpack方法
+			compiler = new this.webpack(
+				config.options,
+				callback
+					? (error, stats) => {
+						if (error && this.isValidationError(error)) {
+							this.logger.error(error.message)
+							process.exit(2);
+						}
+						callback(error, stats);
+					}
+					: callback,
+			)
+		} catch() {
+			// other code ...
+		}
+	}
+
+	// other code...
 }
 ```
 
@@ -147,7 +152,22 @@ const webpack = (options, callback) => {
 
 ## 2. 开始编译
 
-在`lib/webpack.js`中：
+### 2.1 `webpack`启动方法
+
+在`lib/webpack.js`中，有一个`webpack`方法，它是整个`webpack`包的入口：
+
+此`webpack`方法的主要功能有以下几步：
+
+1.  校验传入的`options`格式，如果有报错就抛出错误；
+2.  如果传入的`options`是个数组，则实例化`MultiCompiler`获得一个`compiler`；
+3.  如果传入的`options`是个对象，接着进行下列操作（这也是大部分情况下的逻辑）;
+4.  调用`WebpackOptionsDefaulter`设置`webpack`默认参数；
+5.  实例化`Compiler`，获得一个`compiler`实例，并将`options`设置到`compiler`上；
+6.  实例化`NodeEnvironmentPlugin`，给`compiler`挂载上经过拓展的`fs`文件操作方法；
+7.  挂载所有的`Plugins`，即执行`plugin`对应的`apply`方法；
+8.  调用`environment`和`afterEnvironment`两个`hooks`；
+9.  实例化`WebpackOptionsApply`，给`webpack`挂载默认的一下钩子；
+10.  判断是否有回调`callback`，如果有，调用`compiler.run()`；否则直接返回`compiler`实例；
 
 ```javascript
 /**
@@ -157,39 +177,39 @@ const webpack = (options, callback) => {
  * @returns {Compiler | MultiCompiler} the compiler object
  */
 const webpack = (options, callback) => {
-	// options数据格式校验，JSON Schema
+	// 1. options数据格式校验，JSON Schema
 	const webpackOptionsValidationErrors = validateSchema(
 		webpackOptionsSchema,
 		options
 	);
 
-	// 如果options校验有报错就输出
+	// 1. 如果options校验有报错就输出
 	if (webpackOptionsValidationErrors.length) {
 		throw new WebpackOptionsValidationError(webpackOptionsValidationErrors);
 	}
 
 	let compiler;
 	if (Array.isArray(options)) {
-		// 有多个options配置文件的情况，一般不存在这种情况
+		// 2. 有多个options配置文件的情况，一般不存在这种情况
 		compiler = new MultiCompiler(
 			Array.from(options).map(options => webpack(options))
 		);
 	} else if (typeof options === "object") {
-		// 正常流程，options是个对象
-		// 将options与默认的options进行融合
+		// 3. 正常流程，options是个对象
+		// 4. 将options与默认的options进行融合
 		options = new WebpackOptionsDefaulter().process(options);
 
-		// 初始化Compiler实例
+		// 5. 初始化Compiler实例
 		compiler = new Compiler(options.context);
 		compiler.options = options;
 
-		// 磁盘输入输出文件操作
+		// 6. 磁盘输入输出文件操作
 		// 应用Node的文件系统到compiler，方便后续的查找和读取
 		new NodeEnvironmentPlugin({
 			infrastructureLogging: options.infrastructureLogging
 		}).apply(compiler);
 
-		// 注册所有自定义插件
+		// 7. 注册所有自定义插件
 		if (options.plugins && Array.isArray(options.plugins)) {
 			// 依次调用插件的apply方法，若为函数则直接调用
 			// 同时将compiler对象传入，方便插件调用本次构建提供的webpack API并监听后续所有事件hook
@@ -202,10 +222,11 @@ const webpack = (options, callback) => {
 			}
 		}
 
+    // 8. 调用environment与afterEnvironment两个hooks
 		compiler.hooks.environment.call();
 		compiler.hooks.afterEnvironment.call();
 
-		// 添加一系列插件，依次调用插件的apply方法，同时给插件传入compiler实例
+		// 9. 添加一系列插件，依次调用插件的apply方法，同时给插件传入compiler实例
 		compiler.options = new WebpackOptionsApply().process(options, compiler);
 
 	} else {
@@ -230,7 +251,7 @@ const webpack = (options, callback) => {
 			return compiler.watch(watchOptions, callback);
 		}
 
-		// 否则调用run方法开始编译
+		// 10. 否则调用run方法开始编译
 		compiler.run(callback);
 	}
 
@@ -238,38 +259,289 @@ const webpack = (options, callback) => {
 };
 ```
 
-此`webpack`方法的主要功能有以下几步：
+### 2.2 `Compiler`对象
 
-1.  校验传入的`options`格式，如果有报错就抛出错误；
-2.  如果传入的`options`是个数组，则实例化`MultiCompiler`获得一个`compiler`；
-3.  如果传入的`options`是个对象，接着进行下列操作（这也是大部分情况下的逻辑）;
-4.  调用`WebpackOptionsDefaulter`设置`webpack`默认参数；
-5.  实例化`Compiler`，获得一个`compiler`实例，并将`options`设置到`compiler`上；
-6.  实例化`NodeEnvironmentPlugin`，给`compiler`挂载上经过拓展的`fs`文件操作方法；
-7.  挂载所有的`Plugins`，即执行`plugin`对应的`apply`方法；
-8.  调用`environment`和`afterEnvironment`两个`hooks`；
-9.  实例化`WebpackOptionsApply`，给`webpack`挂载默认的一下钩子；
-10.  判断是否有回调`callback`，如果有，调用`compiler.run()`；否则直接返回`compiler`实例；
+`Compiler`对象包含了`Webpack`环境所有的配置信息，包含`options`，`loader`，`plugins`等，这个对象在`Webpack`启动的时候被实例化，它是全局唯一的，可以把它简单的理解为`Webpack`实例。它代表了`Webpack`从启动到关系的生命周期。
 
-## 3. `Comlipation`实例化
+在`lib/Compiler.js`文件中，定义了`Compiler`对象：
+
+```javascript
+class Compiler extends Tapable {
+  constructor() {
+    // 定义Compiler的生命周期钩子
+    this.hooks = { /*code*/ }
+  }
+  
+  run(callback) {
+    // other code ...
+    
+    // 调用beforeRun钩子上的方法
+		this.hooks.beforeRun.callAsync(this, err => {
+			if (err) return finalCallback(err);
+
+			// 调用run钩子上的方法
+			this.hooks.run.callAsync(this, err => {
+				if (err) return finalCallback(err);
+
+				// 读取之前的records记录
+				this.readRecords(err => {
+					if (err) return finalCallback(err);
+
+					// 执行编译
+					this.compile(onCompiled);
+				});
+			});
+		});
+  }
+  
+  /**
+	 * 执行编译的过程
+	 * @param {function} callback 之前定义的onCompiled方法
+	 */
+  compile(callback) {
+    // 创建compilation的初始参数
+		const params = this.newCompilationParams();
+
+		// 执行beforeCompile钩子上的方法
+		this.hooks.beforeCompile.callAsync(params, err => {
+			if (err) return callback(err);
+
+			// 执行compile钩子上的方法
+			this.hooks.compile.call(params);
+
+			// 创建一个新的compilation对象
+			const compilation = this.newCompilation(params);
+
+			// 开始读取文件，根据不同的loader编译不同的文件，再找出文件中的依赖文件，递归编译
+			this.hooks.make.callAsync(compilation, err => {
+				if (err) return callback(err);
+
+				// 先执行finish方法
+				compilation.finish(err => {
+					if (err) return callback(err);
+
+					// 再执行seal方法
+					// 组装编译后的内容，把module组装成一个chunk，很多优化模块大小的组件都是这个时候调用的
+					compilation.seal(err => {
+						if (err) return callback(err);
+
+						// 执行afterCompile钩子上的方法
+						this.hooks.afterCompile.callAsync(compilation, err => {
+							if (err) return callback(err);
+
+							// 最终成功的回调，没有传入错误信息
+							return callback(null, compilation);
+						});
+					});
+				});
+			});
+		});
+  }
+}
+```
+
+可以看到在`run`方法中，先后调用了`beforeRun`和`run`两个`hook`，然后调用`compile`方法。在`compile`方法中，又先后调用了`beforeCompile`和`compile`两个`hook`。这些都是在真正开始编译之前暴露出的钩子，可供自定义的`plugin`修改`compiler`上的配置。
+
+`const compilation = this.newCompilation(params);`这行代码主要是重新实例化一个`Compilation`对象，开始新一轮的编译。具体内部如何实现，我们在 [2. 3 `Compilation`对象](#2.3 `Compilation`对象)一章中详细讲解。
+
+接下来调用了`make`对应的钩子，这个钩子才是真正开始执行了编译。基于`Tapable`的插件机制，我们在[3. 确定入口](#3. 确定入口)一章中详细讲解。
+
+在`make`钩子执行完毕后，又先后执行了`finish`， `seal`和`afterCompile`几个钩子，其中`finish`是代表资源处理完成，`seal`是将处理后的资源进行拼装分解，组成一个个的`chunk`，`afterCompile`就是结束编译的意思。
+
+### 2.3 `Compilation`对象
+
+`Compilation`对象在每次重新编译时都会重新实例化一次，包含了当次编译的模块资源，编译生成资源，变化的文件等。当`Webpack`以开发模式运行时，每当检测到一个文件变化时，都会重新实例化一次`Compilation`。它只代表一次新的编译。
+
+在`Compiler`对象的`compile`方法中，有一个入口调用：
+
+```javascript
+const params = this.newCompilationParams();
+const compilation = this.newCompilation(params);
+```
+
+其中`this.newCompilationParams()`是获取几个`Factory`，用来作为参数传入`Compilation`。
+
+```javascript
+class Compiler {
+  createNormalModuleFactory() {
+		const normalModuleFactory = new NormalModuleFactory(
+			this.options.context,
+			this.resolverFactory,
+			this.options.module || {}
+		);
+		this.hooks.normalModuleFactory.call(normalModuleFactory);
+		return normalModuleFactory;
+	}
+
+	createContextModuleFactory() {
+		const contextModuleFactory = new ContextModuleFactory(this.resolverFactory);
+		this.hooks.contextModuleFactory.call(contextModuleFactory);
+		return contextModuleFactory;
+	}
+
+	newCompilationParams() {
+		const params = {
+			normalModuleFactory: this.createNormalModuleFactory(),
+			contextModuleFactory: this.createContextModuleFactory(),
+			compilationDependencies: new Set()
+		};
+		return params;
+	}
+}
+```
+
+`this.newCompilation()`即为实例化一个`Compilation`对象：
+
+```javascript
+class Compiler {
+  createCompilation() {
+		return new Compilation(this);
+	}
+
+	newCompilation(params) {
+		const compilation = this.createCompilation();
+		compilation.fileTimestamps = this.fileTimestamps;
+		compilation.contextTimestamps = this.contextTimestamps;
+		compilation.name = this.name;
+		compilation.records = this.records;
+		compilation.compilationDependencies = params.compilationDependencies;
+		this.hooks.thisCompilation.call(compilation, params);
+		this.hooks.compilation.call(compilation, params);
+		return compilation;
+	}
+}
+```
+
+待到`Compilation`实例化完成，编译真正的开始了。
+
+## 3. 确定入口
+
+在`Compiler`对象的`compile`方法中，有一行`this.hooks.make.callAsync()`的代码，这是一种基于`Tapable`的插件机制，在`Compiler`中，只负责调用具体的钩子，真正的执行流程还要看都有哪些插件订阅了哪个钩子。
+
+### 3.1 `webpack`加载插件
+
+寻根溯源，在`webpack.js`文件中，`Webpack`的入口方法`webpack`，有一段处理是要加载默认的插件：
+
+```javascript
+// 添加一系列插件，依次调用插件的apply方法，同时给插件传入compiler实例
+compiler.options = new WebpackOptionsApply().process(options, compiler);
+```
+
+在`WebpackOptionsApply`类的`process`方法中，挂在了`Webpack`编译过程中需要的各种插件，在这些插件中，订阅了各个`hook`事件。所以当我们需要找到`this.hook.make`调用的逻辑时，就应该来此处看哪些插件订阅了`make`这个钩子。
+
+```javascript
+class WebpackOptionsApply {
+  process(options, compiler) {
+    // other code ...
+    // 这里订阅了make钩子，开始加载文件
+		new EntryOptionPlugin().apply(compiler);
+    // other code ...
+  }
+}
+```
+
+### 3.2 `EntryOptionPlugin`类
+
+在`EntryOptionPlugin`类中：
+
+```javascript
+const itemToPlugin = (context, item, name) => {
+	if (Array.isArray(item)) {
+		return new MultiEntryPlugin(context, item, name);
+	}
+	return new SingleEntryPlugin(context, item, name);
+};
+
+class EntryOptionPlugin {
+	/**
+	 * @param {Compiler} compiler the compiler instance one is tapping into
+	 * @returns {void}
+	 */
+	apply(compiler) {
+		// 订阅EntryOptionPlugin，然后在WebpackOptionsApply中马上调用
+		compiler.hooks.entryOption.tap("EntryOptionPlugin", (context, entry) => {
+			if (typeof entry === "string" || Array.isArray(entry)) {
+				itemToPlugin(context, entry, "main").apply(compiler);
+			} else if (typeof entry === "object") {
+				for (const name of Object.keys(entry)) {
+					itemToPlugin(context, entry[name], name).apply(compiler);
+				}
+			} else if (typeof entry === "function") {
+				new DynamicEntryPlugin(context, entry).apply(compiler);
+			}
+			return true;
+		});
+	}
+};
+```
+
+可以看到，当入口`entry`有多个时，调用`MultiEntryPlugin`，当`entry`只有一个时，调用`SingleEntryPlugin`。
+
+### 3.3 `SingleEntryPlugin`类
+
+我们以单入口的情况来分析，在`SingleEntryPlugin`中：
+
+```javascript
+class SingleEntryPlugin {
+  // other code ...
+  
+  /**
+	 * @param {Compiler} compiler the compiler instance
+	 * @returns {void}
+	 */
+	apply(compiler) {
+		// 订阅compilation钩子，这一步也很重要
+		compiler.hooks.compilation.tap(
+			"SingleEntryPlugin",
+			(compilation, { normalModuleFactory }) => {
+				compilation.dependencyFactories.set(
+					SingleEntryDependency,
+					normalModuleFactory
+				);
+			}
+		);
+
+		// 订阅make钩子
+		compiler.hooks.make.tapAsync(
+			"SingleEntryPlugin",
+			(compilation, callback) => {
+				const { entry, name, context } = this;
+
+				// 调用compilation的addEntry方法
+				const dep = SingleEntryPlugin.createDependency(entry, name);
+				compilation.addEntry(context, dep, name, callback);
+			}
+		);
+	}
+  
+  /**
+	 * @param {string} entry entry request
+	 * @param {string} name entry name
+	 * @returns {SingleEntryDependency} the dependency
+	 */
+	static createDependency(entry, name) {
+		const dep = new SingleEntryDependency(entry);
+		dep.loc = { name };
+		return dep;
+	}
+}
+```
+
+可以看到，就是在`SingleEntryPlugin`中的`apply`方法内，这里订阅了`make`钩子。即当执行`this.hook.make.callSync()`时，会执行这里的回调。
 
 
 
-## 4. 确定入口
+## 4. 编译模块
 
 
 
-## 5. 编译模块
+## 5. 完成编译
 
 
 
-## 6. 完成编译
+## 6. 输出资源
 
 
 
-## 7. 输出资源
-
-
-
-## 8. 输出完成
+## 7. 输出完成
 
