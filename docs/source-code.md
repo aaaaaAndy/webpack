@@ -529,11 +529,171 @@ class SingleEntryPlugin {
 
 可以看到，就是在`SingleEntryPlugin`中的`apply`方法内，这里订阅了`make`钩子。即当执行`this.hook.make.callSync()`时，会执行这里的回调。
 
-
-
 ## 4. 编译模块
 
+在确定入口之后，`Webpack`要做的事情就是加载文件并进行解析编译，在`lib/Compilation.js`文件中：
 
+```javascript
+class Compilation {
+  
+  /**
+	 * 编译开始，添加入口文件
+	 * @param {string} context context path for entry
+	 * @param {Dependency} entry entry dependency being created
+	 * @param {string} name name of entry
+	 * @param {ModuleCallback} callback callback function
+	 * @returns {void} returns
+	 */
+  addEntry(context, entry, name, callback) {
+    // code ...
+    
+    // addEntry主要调用_addModuleChain方法
+		this._addModuleChain(
+			context,
+			entry,
+			module => {
+				this.entries.push(module);
+			},
+			(err, module) => {/* code ... */}
+		);
+  }
+  
+  /**
+	 *
+	 * @param {string} context context string path
+	 * @param {Dependency} dependency dependency used to create Module chain
+	 * @param {OnModuleCallback} onModule function invoked on modules creation
+	 * @param {ModuleChainCallback} callback callback for when module chain is complete
+	 * @returns {void} will throw if dependency instance is not a valid Dependency
+	 */
+	_addModuleChain(context, dependency, onModule, callback) {
+    // code ...
+    
+    // semaphorel类似于一个线程池，对并发数量进行控制，默认最多同时运行100个任务
+		this.semaphore.acquire(() => {
+			// 调用工厂函数NormalModuleFactory的create来生成一个空的NormalModule对象
+			// 可以认为一个文件即为一个module
+			moduleFactory.create(
+				{
+					contextInfo: {
+						issuer: "",
+						compiler: this.compiler.name
+					},
+					context: context,
+					dependencies: [dependency]
+				},
+				(err, module) => {
+
+					// _addModuleChain中接收参数dependency传入的入口依赖，使用对应的工厂函数NormalModuleFactory.create方法生成一个空的module对象,
+					// 回调中会把此module存入compilation.modules对象和dependencies.module对象中，由于是入口文件，也会存入compilation.entries中。
+					const addModuleResult = this.addModule(module);
+					module = addModuleResult.module;
+
+					onModule(module);
+
+					const afterBuild = () => {
+						if (addModuleResult.dependencies) {
+							// 递归处理文件的依赖
+              // 用于获取需要被递归解析的依赖
+							this.processModuleDependencies(module, err => {
+								if (err) return callback(err);
+								callback(null, module);
+							});
+						} else {
+							return callback(null, module);
+						}
+					};
+
+					// 执行buildModule进入真正的构建module内容的过程
+					if (addModuleResult.build) {
+						this.buildModule(module, false, null, null, err => {
+							this.semaphore.release();
+							afterBuild();
+						});
+					} else {/* code ... */
+					}
+				}
+			);
+		})
+  }
+                           
+  /**
+	 * Builds the module object
+	 *
+	 * @param {Module} module module to be built
+	 * @param {boolean} optional optional flag
+	 * @param {Module=} origin origin module this module build was requested from
+	 * @param {Dependency[]=} dependencies optional dependencies from the module to be built
+	 * @param {TODO} thisCallback the callback
+	 * @returns {TODO} returns the callback function with results
+	 */
+	buildModule(module, optional, origin, dependencies, thisCallback) {
+    // code ...
+    module.build(
+			this.options,
+			this,
+			this.resolverFactory.get("normal", module.resolveOptions),
+			this.inputFileSystem,
+			error => {/* code... */}
+    )
+  }
+}
+```
+
+`module.build`最终调用的是`lib/NormalModule.js`中的`build`方法：
+
+```javascript
+class NormalModule {
+  build(options, compilation, resolver, fs, callback) {
+    return this.doBuild(options, compilation, resolver, fs, err => {
+      // code ...
+      try {
+        // 这里转换成ast语法树进行解析
+				const result = this.parser.parse(
+					this._ast || this._source.source(),
+					{
+						current: this,
+						module: this,
+						compilation: compilation,
+						options: options
+					},
+					(err, result) => {
+						if (err) {
+							handleParseError(err);
+						} else {
+							handleParseResult(result);
+						}
+					}
+				);
+				if (result !== undefined) {
+					// parse is sync
+					handleParseResult(result);
+				}
+			} catch (e) {
+				handleParseError(e);
+			}
+    })
+  }
+  
+  doBuild(options, compilation, resolver, fs, callback) {
+    // code...
+    // 调用相应的loader，把我们的模块转换成标准的js模块
+		runLoaders(
+			{
+				resource: this.resource,
+				loaders: this.loaders,
+				context: loaderContext,
+				readResource: fs.readFile.bind(fs)
+			},
+			(err, result) => {
+        callback(result)
+      }
+    )
+  }
+}
+```
+
+可以看出，经过一连串的调用，`Webpack`先是读取了入口文件，然后调用对应的`loader`将其转换为`js`可以识别的内容格式，然后进行`parse`将其转换为`AST`语法树，最后调用外层的回调`this.processModuleDependencies()`处理该模块的依赖。
 
 ## 5. 完成编译
 
