@@ -531,6 +531,8 @@ class SingleEntryPlugin {
 
 ## 4. 编译模块
 
+### 4.1 `Compilation`类
+
 在确定入口之后，`Webpack`要做的事情就是加载文件并进行解析编译，在`lib/Compilation.js`文件中：
 
 ```javascript
@@ -538,37 +540,15 @@ class Compilation {
   
   /**
 	 * 编译开始，添加入口文件
-	 * @param {string} context context path for entry
-	 * @param {Dependency} entry entry dependency being created
-	 * @param {string} name name of entry
-	 * @param {ModuleCallback} callback callback function
-	 * @returns {void} returns
 	 */
   addEntry(context, entry, name, callback) {
     // code ...
-    
     // addEntry主要调用_addModuleChain方法
-		this._addModuleChain(
-			context,
-			entry,
-			module => {
-				this.entries.push(module);
-			},
-			(err, module) => {/* code ... */}
-		);
+		this._addModuleChain();
   }
   
-  /**
-	 *
-	 * @param {string} context context string path
-	 * @param {Dependency} dependency dependency used to create Module chain
-	 * @param {OnModuleCallback} onModule function invoked on modules creation
-	 * @param {ModuleChainCallback} callback callback for when module chain is complete
-	 * @returns {void} will throw if dependency instance is not a valid Dependency
-	 */
 	_addModuleChain(context, dependency, onModule, callback) {
     // code ...
-    
     // semaphorel类似于一个线程池，对并发数量进行控制，默认最多同时运行100个任务
 		this.semaphore.acquire(() => {
 			// 调用工厂函数NormalModuleFactory的create来生成一个空的NormalModule对象
@@ -583,14 +563,7 @@ class Compilation {
 					dependencies: [dependency]
 				},
 				(err, module) => {
-
-					// _addModuleChain中接收参数dependency传入的入口依赖，使用对应的工厂函数NormalModuleFactory.create方法生成一个空的module对象,
-					// 回调中会把此module存入compilation.modules对象和dependencies.module对象中，由于是入口文件，也会存入compilation.entries中。
-					const addModuleResult = this.addModule(module);
-					module = addModuleResult.module;
-
-					onModule(module);
-
+         // build之后的回调，处理该模块的依赖
 					const afterBuild = () => {
 						if (addModuleResult.dependencies) {
 							// 递归处理文件的依赖
@@ -605,34 +578,22 @@ class Compilation {
 					};
 
 					// 执行buildModule进入真正的构建module内容的过程
-					if (addModuleResult.build) {
-						this.buildModule(module, false, null, null, err => {
-							this.semaphore.release();
+					this.buildModule(module, false, null, null, err => {
 							afterBuild();
 						});
-					} else {/* code ... */
-					}
 				}
 			);
 		})
   }
                            
-  /**
-	 * Builds the module object
-	 *
-	 * @param {Module} module module to be built
-	 * @param {boolean} optional optional flag
-	 * @param {Module=} origin origin module this module build was requested from
-	 * @param {Dependency[]=} dependencies optional dependencies from the module to be built
-	 * @param {TODO} thisCallback the callback
-	 * @returns {TODO} returns the callback function with results
-	 */
 	buildModule(module, optional, origin, dependencies, thisCallback) {
     // code ...
+    // 调用NormalModule中的build方法
     module.build(
 			this.options,
 			this,
 			this.resolverFactory.get("normal", module.resolveOptions),
+      // 文件操作
 			this.inputFileSystem,
 			error => {/* code... */}
     )
@@ -640,11 +601,14 @@ class Compilation {
 }
 ```
 
+### 4.2 `NormalModule`类
+
 `module.build`最终调用的是`lib/NormalModule.js`中的`build`方法：
 
 ```javascript
 class NormalModule {
   build(options, compilation, resolver, fs, callback) {
+    // 先调用doBuild方法，其中有两步操作，一是读取本地文件，二是对文件进行Loader处理
     return this.doBuild(options, compilation, resolver, fs, err => {
       // code ...
       try {
@@ -675,6 +639,7 @@ class NormalModule {
     })
   }
   
+  // 该函数有两步操作，一是读取本地文件，二是对文件进行Loader处理
   doBuild(options, compilation, resolver, fs, callback) {
     // code...
     // 调用相应的loader，把我们的模块转换成标准的js模块
@@ -695,13 +660,90 @@ class NormalModule {
 
 可以看出，经过一连串的调用，`Webpack`先是读取了入口文件，然后调用对应的`loader`将其转换为`js`可以识别的内容格式，然后进行`parse`将其转换为`AST`语法树，最后调用外层的回调`this.processModuleDependencies()`处理该模块的依赖。
 
+### 4.3 总结
+
+编译模块的过程经历了以下几步：
+
+1.  调用`Compilation.addEntry()`方法添加入口，，开始编译；
+2.  `addEntry`中调用`_addModuleChain`，将模块添加到依赖列表里，并编译模块；
+3.  `_addModuleChain`中调用`NormalModule.create`，创建一个空的`NormalModule`对象，以供后续使用；
+4.  调用`buildModule`，在`buildModule`中调用`NormalModule.build`，在其中会进行文件的读取，`Loader`的处理，并将代码转成`AST`语法树；
+5.  `afterBuild`中分析文件的依赖关系并递归对所有依赖重复以上步骤，最后将所有模块的`require`语法替换为`__webpack_require__`来模拟模块化操作。
+
 ## 5. 完成编译
 
+在`lib/Compiler.js`文件中，执行完`this.hooks.make.callAsync()`后：
 
+```javascript
+class Compiler {
+  compile() {
+    // 开始读取文件，根据不同的loader编译不同的文件，再找出文件中的依赖文件，递归编译
+			this.hooks.make.callAsync(compilation, err => {
+				if (err) return callback(err);
+
+				// 先执行finish方法
+				compilation.finish(err => {
+					if (err) return callback(err);
+
+					// 再执行seal方法
+					// 组装编译后的内容，把module组装成一个chunk，很多优化模块大小的组件都是这个时候调用的
+					compilation.seal(err => {
+						if (err) return callback(err);
+
+						// 执行afterCompile钩子上的方法
+						this.hooks.afterCompile.callAsync(compilation, err => {
+							if (err) return callback(err);
+
+							// 最终成功的回调，没有传入错误信息
+							return callback(null, compilation);
+						});
+					});
+				});
+			});
+  }
+}
+```
 
 ## 6. 输出资源
 
+执行到`compilation.seal`时即代表编译过程已经完成，接下来就开始打包封装模块了。
 
+`compilation.seal`的步骤比较多，先封闭模块，生成资源，这些资源保存在`compilation.assets`, `compilation.chunks`。然后调用`compilation.createChunkAssets`方法把所有依赖项通过对应的模板 render 出一个拼接好的字符串：
+
+```javascript
+class Compilation {
+  createChunkAssets() {
+		for (let i = 0; i < this.chunks.length; i++) {
+			try {
+				const template = chunk.hasRuntime()
+					? this.mainTemplate
+					: this.chunkTemplate;
+				const manifest = template.getRenderManifest({}); // [{ render(), filenameTemplate, pathOptions, identifier, hash }]
+				for (const fileManifest of manifest) {
+					// code...
+					this.emitAsset(file, source, assetInfo);
+					chunk.files.push(file);
+					this.hooks.chunkAsset.call(chunk, file);
+					alreadyWrittenFiles.set(file, {
+						hash: usedHash,
+						source,
+						chunk
+					});
+				}
+			} catch (err) {
+				this.errors.push(
+					new ChunkRenderError(chunk, file || filenameTemplate, err)
+				);
+			}
+		}
+	}
+}
+```
+
+`createChunkAssets`执行过程中，会优先读取cache中是否已经有了相同hash的资源，如果有，则直接返回内容，否则才会继续执行模块生成的逻辑，并存入cache中。
+
+在seal执行后，关于模块所有信息以及打包后源码信息都存在内存中，是时候将它们输出为文件了。接下来就是一连串的callback回调，最后我们到达了`compiler.emitAssets`方法体中。在`compiler.emitAssets`中会先调用`this.hooks.emit`生命周期，之后根据webpack config文件的output配置的path属性，将文件输出到指定的文件夹。至此，你就可以在`./debug/dist`中查看到调试代码打包后的文件了
 
 ## 7. 输出完成
 
+至此，在输出文件夹下就能看到对应的打包文件了。
