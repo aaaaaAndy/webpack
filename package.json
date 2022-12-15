@@ -27,6 +27,7 @@
     "tapable": "^1.1.3",
     "terser-webpack-plugin": "^1.4.3",
     "watchpack": "^1.7.4",
+    "webpack-cli": "^4.10.0",
     "webpack-sources": "^1.4.1"
   },
   "peerDependenciesMeta": {
@@ -87,8 +88,8 @@
     "val-loader": "^1.0.2",
     "vm-browserify": "~1.1.0",
     "wast-loader": "^1.5.5",
-    "webpack-dev-middleware": "^3.5.1",
     "webassembly-feature": "1.3.0",
+    "webpack-dev-middleware": "^3.5.1",
     "worker-loader": "^2.0.0",
     "xxhashjs": "^0.2.1"
   },

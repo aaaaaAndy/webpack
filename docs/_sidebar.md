@@ -1,2 +1,10 @@
-- [Webpack文档](/)
-- [Webpack源码](source-code.md)
+- [Webpack源码](src/source-code.md)
+- [编译顺序](src/process.md)
+* **编译顺序逐步详解**
+  - [`初始化参数`](src/init-args.md)
+  - [`开始编译`](src/begin-compile.md)
+  - [`确定入口`](src/entry-point.md)
+  - [`编译模块`](src/init-args.md)
+  - [`完成编译`](src/init-args.md)
+  - [`输出资源`](src/init-args.md)
+  - [`输出完成`](src/init-args.md)

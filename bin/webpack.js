@@ -80,9 +80,11 @@ const CLIs = [
 	}
 ];
 
+console.log(111, require.resolve('webpack-cli'));
 const installedClis = CLIs.filter(cli => cli.installed);
 
 if (installedClis.length === 0) {
+	// 如果 webpack-cli 和 webpack-command 两个都不存在会走到这一步
 	const path = require("path");
 	const fs = require("fs");
 	const readLine = require("readline");
@@ -138,6 +140,7 @@ if (installedClis.length === 0) {
 			)} ${packageName}')...`
 		);
 
+		// 调用 runCommand 方法安装选中的 webpack-cli 或者 webpack-command
 		runCommand(packageManager, installOptions.concat(packageName))
 			.then(() => {
 				require(packageName); //eslint-disable-line
@@ -148,11 +151,13 @@ if (installedClis.length === 0) {
 			});
 	});
 } else if (installedClis.length === 1) {
+	// 如果 webpack-cli 或者 webpack-command 存在任何一个就会走到这一步
 	const path = require("path");
 	const pkgPath = require.resolve(`${installedClis[0].package}/package.json`);
 	// eslint-disable-next-line node/no-missing-require
 	const pkg = require(pkgPath);
 	// eslint-disable-next-line node/no-missing-require
+	// 这里相当于加载 webpack-cli/bin/cli.js，也就是先执行 webpack-cli 下的可执行文件
 	require(path.resolve(
 		path.dirname(pkgPath),
 		pkg.bin[installedClis[0].binName]

@@ -1,0 +1,13 @@
+{
+  "name": "docs",
+  "version": "1.0.0",
+  "description": "read webpack source code",
+  "main": "index.js",
+  "scripts": {
+    "dev": "docsify serve . --open",
+    "dp": "sh git.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

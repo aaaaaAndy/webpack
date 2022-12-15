@@ -12,3 +12,5 @@
 .vscode
 .eslintcache
 package-lock.json
+.tags_sorted_by_file
+.tags
